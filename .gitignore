@@ -1,0 +1,52 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# === Jupyter ===
+.ipynb_checkpoints/
+*.ipynb_metadata
+
+# === Data (too large for git) ===
+data/*
+!data/.gitkeep
+
+# === Model checkpoints ===
+checkpoints/
+*.pth
+*.pt
+
+# === Environment ===
+.env
+.venv/
+venv/
+env/
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# === OS ===
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# === Claude Code ===
+.claude/
+
+# === Generated outputs ===
+results/
+
+# === Misc ===
+*.log
+*.tmp
+.cache/
+wandb/
