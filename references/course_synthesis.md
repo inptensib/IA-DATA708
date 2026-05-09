@@ -390,18 +390,41 @@ SE = Σ_{i=1}^{N} |error(concat(B_i,...,B_N)) − error(concat(O_i,...,O_N))|
 ### Exigences exactes
 
 - 2 livrables : notebook reproductible + note d'analyse (1-2 pages)
+- Tâche : **classification ou prédiction de liens** (le sujet autorise les deux)
 - Coder from scratch (pas Fairlearn/AIF360)
 - Mention obligatoire de l'utilisation d'IA
 - Barème : 40% implémentation, 20% protocole, 30% analyse, 10% note
 - L'objectif n'est PAS la performance max mais l'ANALYSE RIGOUREUSE
 
+### Choix du projet : Link Prediction
+
+La prédiction de liens a été choisie car :
+- C'est la tâche la plus naturelle pour un graphe social (prédire les amitiés)
+- Le biais d'homophilie (les gens se lient avec ceux qui leur ressemblent)
+  se manifeste directement dans les prédictions de liens
+- L'angle fairness est riche : le modèle renforce-t-il la ségrégation ?
+
 ---
 
-## Mapping Cours → Actes du Projet
+## Mapping Cours → Actes du Projet (Link Prediction)
 
 | Acte | Cours principal | Cours support | Formules clés |
 |------|----------------|---------------|---------------|
-| 1 — Baseline | Fairness MS 1 | Intro Générale | DP, EOpp, EO gaps |
-| 2 — XAI | Interprétabilité | — | Fidelity+/-, perturbation tests |
-| 3 — Fairness | Fairness Mitigation | Fairness MS 1 | Reweighting w(a,y), L_total = L_task + λ×L_fair |
-| 4 — Uncertainty | Uncertainty | — | H(P), I(Y|x), ECE, MC Dropout |
+| 1 — Baseline LP | Fairness MS 1 | Intro Générale | AUC, AP, DP gap (intra/inter), EOpp gap |
+| 2 — XAI | Interprétabilité | — | GNNExplainer (arêtes), Fidelity+/- |
+| 3 — Fairness | Fairness Mitigation | Fairness MS 1 | Reweighting par type de paire, L_total = L_task + λ×L_fair |
+| 4 — Uncertainty | Uncertainty | — | H binaire, Var MC, ECE, MC Dropout sur scores de liens |
+
+### Adaptation des formules de fairness pour la link prediction
+
+Les métriques de fairness des cours (conçues pour la classification) sont
+adaptées en remplaçant les groupes de nœuds par les types de paires :
+
+- **Groupe A=0/A=1** → **Type de paire intra/inter-genre**
+- **P(Ŷ=1|A=a)** → **P(lien prédit | paire intra/inter)**
+- **TPR_a** → **TPR par type de paire**
+- **Reweighting w(a,y)** → **w(type_paire) = N_total / (2 × N_type)**
+
+L'incertitude s'adapte naturellement : MC Dropout produit T scores par
+paire, et l'entropie binaire H = -p·log(p) - (1-p)·log(1-p) remplace
+l'entropie multiclasse.
