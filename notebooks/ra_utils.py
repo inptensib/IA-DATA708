@@ -65,7 +65,8 @@ def load_pokec(data_dir, region='ceska republika'):
     p = pd.read_csv(os.path.join(data_dir, 'soc-pokec-profiles.txt'), sep='\t', header=None,
                     na_values='null', usecols=USECOLS, low_memory=False)
     p.columns = ['user_id', 'public', 'comp', 'gender', 'region', 'age'] + [f't{i}' for i in range(30)]
-    p = p[p['region'].astype(str).str.startswith(region)].copy()
+    if region:
+        p = p[p['region'].astype(str).str.startswith(region)].copy()
     for c in ['gender', 'age', 'comp', 'public']:
         p[c] = pd.to_numeric(p[c], errors='coerce')
     p = p[p['gender'].isin([0, 1])].copy()
