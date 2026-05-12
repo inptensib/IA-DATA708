@@ -364,3 +364,84 @@ def plot_pair_distribution(data_v, pred_v, diffs, figsize=(13, 5)):
 # === Verdicts ===
 verdict_str = lambda v, t, op='lt': 'fair' if (op == 'lt' and v <= t) or (op == 'ge' and v >= t) or (op == 'gt' and v > t) else 'biaisé'
 verdict_mark = lambda v, t, op='lt': '✓' if (op == 'lt' and v <= t) or (op == 'ge' and v >= t) or (op == 'gt' and v > t) else '✗'
+
+# === Fonction d'entraînement avec corrections de fairness ===
+def train_fair(model, train_data, val_data, sens, device,
+               epochs=100, lr=0.01, weight_decay=5e-4, eval_every=10,
+               reweight=False, lam_dp=0.0, desc='Entraînement'):
+    """Entraînement GCN avec reweighting et/ou régularisation DP.
+    
+    Args:
+        reweight: si True, pondère la loss par type de paire (w = N_total / 2*N_type)
+        lam_dp: coefficient lambda de régularisation DP (0 = désactivé)
+    """
+    opt = Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    xd = train_data.x.to(device)
+    eid = train_data.edge_index.to(device)
+    elid = train_data.edge_label_index.to(device)
+    eld = train_data.edge_label.float().to(device)
+
+    # Types de paires pour les arêtes d'entraînement
+    pt_train = classify_pairs(train_data.edge_label_index, sens).to(device)
+    intra_mask = (pt_train == 0) | (pt_train == 3)
+    inter_mask = (pt_train == 1) | (pt_train == 2)
+
+    # Poids de reweighting : w(type) = N_total / (2 * N_type)
+    weights = torch.ones(len(eld), device=device)
+    if reweight:
+        n_intra, n_inter = intra_mask.sum().item(), inter_mask.sum().item()
+        weights[intra_mask] = len(eld) / (2 * n_intra)
+        weights[inter_mask] = len(eld) / (2 * n_inter)
+        print(f"  Reweighting : w_intra={weights[intra_mask][0]:.4f}, w_inter={weights[inter_mask][0]:.4f}")
+
+    # Données de validation
+    vx, vei = val_data.x.to(device), val_data.edge_index.to(device)
+    veli, vl = val_data.edge_label_index.to(device), val_data.edge_label.numpy()
+
+    bce = nn.BCEWithLogitsLoss(reduction='none')
+    best_auc, best_state = 0, None
+
+    for ep in tqdm(range(1, epochs + 1), desc=desc, leave=False):
+        model.train()
+        opt.zero_grad()
+        logits = model(xd, eid, elid)
+
+        # Loss tâche (avec reweighting optionnel)
+        task_loss = (bce(logits, eld) * weights).mean()
+
+        # Régularisation DP : pénalise |mean(score_intra) - mean(score_inter)|
+        if lam_dp > 0:
+            scores = torch.sigmoid(logits)
+            dp_penalty = torch.abs(scores[intra_mask].mean() - scores[inter_mask].mean())
+            loss = task_loss + lam_dp * dp_penalty
+        else:
+            loss = task_loss
+
+        loss.backward()
+        opt.step()
+
+        if ep % eval_every == 0:
+            model.eval()
+            with torch.no_grad():
+                va = roc_auc_score(vl, torch.sigmoid(model(vx, vei, veli)).cpu().numpy())
+            if va > best_auc:
+                best_auc = va
+                best_state = {k: v.clone() for k, v in model.state_dict().items()}
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    return best_auc
+
+
+def collect_results(model, test_data, sens, device):
+    """Évalue un modèle et collecte toutes les métriques (performance + fairness + leakage)."""
+    tp, tl, tpt, auc, ap, f, f1 = evaluate_link_pred(model, test_data, sens, device)
+    model.eval()
+    with torch.no_grad():
+        z = model.encode(test_data.x.to(device), test_data.edge_index.to(device)).cpu()
+    cos_fh, _, acc_te, prop_majo = probe_gender(z, sens)
+    return {
+        'auc': auc, 'ap': ap, 'f1': f1, 'f': f,
+        'cos_fh': cos_fh, 'leakage': acc_te - prop_majo,
+        'tp': tp, 'tl': tl, 'tpt': tpt,
+    }
