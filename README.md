@@ -1,19 +1,19 @@
 # IA-DATA708 — Responsible AI on Social Graphs
 
-Projet final du module **IADATA708 — Algorithmic Fairness, Interpretability and Robustness**, Mastère Spécialisé Big Data & IA, Télécom Paris, 2026.
+Projet final du module IADATA708 — Algorithmic Fairness, Interpretability and Robustness, Mastère Spécialisé Big Data & IA, Télécom Paris, 2026.
 
 ## Objectif
 
-Pipeline complet de Responsible AI sur le graphe social **Pokec-z** (~67K nœuds, ~882K arêtes) avec un GCN pour la classification de nœuds. Le projet suit une approche en 4 actes :
+Pipeline de Responsible AI sur le réseau social Pokec (sous-région Ceska republika, ~31K nœuds, ~108K arêtes) avec un GCN pour la prédiction de liens. Le projet suit 4 étapes :
 
-1. **Baseline** — Entraîner un GCN et mesurer performance + biais initial
-2. **Diagnostic XAI** — GNNExplainer + GNNShap pour identifier les sources de biais
-3. **Correction Fairness** — Reweighting + régularisation DP (from scratch)
-4. **Validation** — MC Dropout + perturbations pour vérifier robustesse et incertitude
+1. Baseline — Entraîner un GCN et mesurer performance + biais initial (probing, amplification homophilie)
+2. Diagnostic XAI — Saliency, GNNExplainer, SHAP, counterfactual pour identifier les sources de biais
+3. Correction Fairness — Reweighting, régularisation DP, FairGNN (codés sans librairie externe)
+4. Validation — MC Dropout, ECE, perturbations features + edge removal
 
 ## Stack
 
-PyTorch, PyTorch Geometric, scikit-learn, matplotlib, seaborn, NetworkX
+PyTorch, PyTorch Geometric, scikit-learn, SHAP, matplotlib, seaborn
 
 ## Installation
 
@@ -29,13 +29,14 @@ pip install -r requirements.txt
 
 ```
 ├── notebooks/
-│   ├── 01_eda.ipynb           # Exploration des données Pokec-z
-│   └── 02_pipeline.ipynb      # Notebook principal : les 4 actes
+│   ├── 01_eda_link_prediction.ipynb  # Exploration des données Pokec
+│   ├── 02_pipeline.ipynb             # Notebook principal : les 4 étapes
+│   └── ra_utils.py                   # Helpers réutilisables
 ├── report/
-│   └── note_analyse.md        # Note d'analyse (1-2 pages)
-├── references/                # Synthèse des cours et papiers
-├── data/                      # Dataset Pokec-z (gitignored)
-├── requirements.txt           # Dépendances Python
+│   └── note_analyse.md               # Note d'analyse (1-2 pages)
+├── references/                       # Synthèse des cours
+├── data/                             # Dataset Pokec (gitignored)
+├── requirements.txt
 └── README.md
 ```
 

@@ -29,6 +29,9 @@ tqdm>=4.65.0
 jupyter>=1.0.0
 ipykernel>=6.25.0
 
+# === XAI ===
+shap>=0.42.0
+
 # === Optional (advanced) ===
 # tensorboard>=2.14.0    # Training monitoring
 # captum>=0.7.0          # Alternative XAI library

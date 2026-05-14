@@ -39,7 +39,7 @@ env/
 Thumbs.db
 desktop.ini
 
-# === Claude Code ===
+# === Config ===
 .claude/
 
 # === Generated outputs ===
