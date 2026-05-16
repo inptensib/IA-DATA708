@@ -14,7 +14,7 @@ from torch_geometric.nn import GCNConv, GATv2Conv, SGConv
 from sklearn.metrics import roc_auc_score
 from tqdm.notebook import tqdm
 
-from utils import classify_pairs
+from metrics import classify_pairs
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
