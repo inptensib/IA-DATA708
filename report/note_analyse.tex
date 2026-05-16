@@ -1,0 +1,156 @@
+\documentclass[conference, a4paper]{IEEEtran}
+
+% --- PACKAGES REQUIS ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{amsmath, amssymb, amsfonts}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{microtype}
+\usepackage{cite}
+\usepackage{hyperref}
+
+% --- CONFIGURATION DU DOCUMENT ---
+\title{Optimisation sous Contrainte d'Équité pour la Prédiction de Liens : Analyse Topologique et Robustesse sur Pokec}
+
+% --- BLOC DES 4 AUTEURS ---
+\author{
+\IEEEauthorblockN{Younes Boutrouft\IEEEauthorrefmark{1},
+Amir Kashani\IEEEauthorrefmark{1},
+Mehdi Ait Hamma\IEEEauthorrefmark{7},
+Tahiana Hajanirina Andriambahoaka\IEEEauthorrefmark{1}}
+\IEEEauthorblockA{\textit{\IEEEauthorrefmark{1}MS Data \quad \IEEEauthorrefmark{7}MS IA}\\
+\textit{Télécom Paris}}
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Le réseau social Pokec présente un biais de genre marqué que les GCN reproduisent. On teste trois corrections sur la sous-région la plus biaisée : reweighting, régularisation DP, et FairGNN adversarial. Notre diagnostic XAI montre que retirer le feature genre \emph{aggrave} le biais : il vient de la topologie du graphe, pas du feature lui-même. La régularisation DP ($\lambda=0.1$) donne le meilleur compromis pratique. FairGNN ($\alpha=0.5$) va plus loin sur la fairness mais reste fragile à régler. MC Dropout et les tests de bruit confirment que les corrections survivent aux perturbations.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Équité Algorithmique, GCN, Prédiction de Liens, Apprentissage Antagoniste, Incertitude.
+\end{IEEEkeywords}
+
+\section{Introduction}
+Les Graph Convolutional Networks \cite{kipf2017semi} sont devenus la référence pour la prédiction de liens dans les réseaux sociaux. Leur principe est simple : chaque nœud agrège les features de ses voisins via le message-passing. Sur un graphe homophile, ce mécanisme amplifie naturellement la similarité entre nœuds du même groupe. Notre question : ce biais structurel se traduit-il dans les prédictions, et que peut-on faire pour le corriger sans casser la performance ?
+
+\section{Protocole Expérimental}
+On évalue le pipeline sur \textbf{Pokec}, le plus grand réseau social slovaque, filtré sur la sous-région \textit{Ceska Republika} (31\,298 nœuds, 107\,802 arêtes, 64 features). C'est la région avec le biais de genre le plus marqué (ratio H$\to$F / H$\to$H = 4.59$\times$). L'attribut sensible est binaire (F=57\%, H=43\%).
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{ll}
+\toprule
+\textbf{Paramètre} & \textbf{Valeur} \\
+\midrule
+Encodeur & GCN 2 couches (64$\to$128$\to$64), Dropout 0.5 \\
+Décodeur & Produit scalaire + sigmoïde \\
+Split arêtes & Train 70\% / Val 15\% / Test 15\% \\
+Optimiseur & Adam, weight\_decay=5e-4 \\
+Learning rate & 0.01 (GCN, SGC) ; 0.005 (GAT) \\
+Epochs & 100, best-model sur AUC val \\
+Seed & 42 \\
+Modèles comparés & GCN, SGC (K=2), GAT (4 têtes) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Diagnostic du Biais Topologique}
+
+\subsection{Performance de Base et Fuite d'Information}
+Le GCN baseline prédit bien (AUC = 0.855) mais avec un biais clair : DP gap = 0.051, juste au-dessus du seuil de fairness. En regardant les embeddings, les centroïdes des nœuds femmes et hommes pointent dans la même direction (cosine = 0.669). Le test le plus parlant : un simple classifieur linéaire entraîné sur les embeddings devine le genre à 82\% — bien au-dessus du baseline majoritaire à 57\%. C'est notre signal le plus net que le GCN encode le genre sans qu'on le lui ait demandé.
+
+\subsection{Le Paradoxe de l'Ablation}
+Pour isoler la source du biais, on a mis à zéro la colonne \texttt{gender} ($\mathbf{X}_{gender} = 0$) puis on a refait l'inférence. À notre surprise, le DP gap \emph{augmente} (0.051 $\to$ 0.063). Ce résultat est important : le biais ne vient pas du feature explicite, il vient de la topologie. Bien que Ceska Republika soit globalement hétérophile (36\% d'arêtes intra-genre, sous le 50\% du hasard), elle présente une asymétrie structurelle marquée (ratio H$\to$F/H$\to$H = 4.59$\times$) que le GCN exploite via le message-passing pour reconstruire l'info de genre. Le GAT confirme cette lecture : son mécanisme d'attention pondère spontanément plus fort les voisins du même genre, amplifiant l'homophilie dans les prédictions au-delà de ce que contient le graphe.
+
+\section{Atténuation : Pénalité vs. Antagonisme}
+
+Première leçon : le reweighting \cite{kamiran2012data} ne suffit pas. Le DP gap reste à 0.056 — pondérer la loss ne neutralise pas un biais qui vient de la structure du graphe. On se tourne donc vers deux approches \textit{In-processing}.
+
+\subsection{Régularisation Continue de la Parité Démographique}
+On ajoute une pénalité différentiable sur la différence des scores moyens entre paires intra et inter-genre \cite{agarwal2018reductions} :
+\begin{equation}
+\mathcal{L}_{total} = \mathcal{L}_{task} + \lambda \left| \mathbb{E}[\hat{p}_{intra}] - \mathbb{E}[\hat{p}_{inter}] \right|
+\end{equation}
+En faisant varier $\lambda$, on trace une courbe de Pareto. L'optimum est à $\lambda=0.1$ : DP gap divisé par deux (0.030) pour seulement 0.2\% de perte d'AUC (0.853). Au-delà de $\lambda = 1$, le modèle sur-corrige : le cosine bascule en négatif (les centroïdes pointent en directions opposées), et le Leakage reste élevé ($+30.3$ pp). On gagne en équité de sortie mais on perd en équité de représentation.
+
+\subsection{Apprentissage Antagoniste (FairGNN)}
+Pour nettoyer les embeddings du signal genre, FairGNN \cite{dai2021say} oppose l'encodeur ($E$) à un discriminateur ($A$) qui essaie de prédire le genre $s$ depuis les embeddings $\mathbf{Z}$. L'entraînement alterne un pas du discriminateur et un pas de l'encodeur :
+\begin{equation}
+\min_{\theta_E} \max_{\theta_A} \left( \mathcal{L}_{task} - \alpha \mathcal{L}_{adv}(A(\mathbf{Z}), s) \right)
+\end{equation}
+Avec $\alpha=0.5$, FairGNN donne le meilleur DP (0.004) pour une AUC de 0.848. Le cosine bascule en négatif, ce qui montre que les embeddings sont effectivement déstructurés. Mais le réglage de $\alpha$ est fragile : au-delà de 1, le DP remonte au-dessus du baseline. Ce comportement non-monotone est une limite à prendre au sérieux.
+
+\begin{table}[htbp]
+\centering
+\caption{Synthèse des Performances et de la Robustesse}
+\label{tab:results}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Méthode} & \textbf{AUC} & \textbf{DP Gap} & \textbf{Leakage} & \textbf{DP (Bruit $\sigma=0.5$)} \\
+\midrule
+Baseline (GCN) & 0.855 & 0.051 & +25.0 pp & 0.010$^*$ \\
+DP Reg ($\lambda=0.1$) & 0.853 & 0.030 & +30.3 pp & 0.040 \\
+FairGNN ($\alpha=0.5$) & 0.848 & \textbf{0.004} & +34.8 pp & \textbf{0.015} \\
+\bottomrule
+\multicolumn{5}{l}{\scriptsize $^*$Le bruit détruit le signal topologique du baseline.}
+\end{tabular}
+\end{table}
+
+\section{Incertitude et Robustesse}
+
+\subsection{Quantification de l'Incertitude}
+On utilise MC Dropout \cite{gal2016dropout} avec 30 passes (dropout actif à l'inférence). L'entropie prédictive moyenne est élevée ($\mathcal{H} \approx 0.56$, sur un maximum de 0.69), mais l'information mutuelle est faible ($\mathcal{I} \approx 0.025$). L'incertitude est donc surtout aléatoire — liée au bruit des données — pas épistémique. L'ECE vaut $\approx 0.16$ pour les trois modèles : le décodeur dot-product est mal calibré, indépendamment de la correction fairness.
+
+\subsection{Résilience aux Perturbations}
+On ajoute du bruit gaussien ($\sigma=0.5$) sur les features et on observe ce qui résiste. DP-reg ($\lambda=0.1$) voit son DP gap remonter à 0.040 — sa correction agit sur les scores de sortie, pas en profondeur. FairGNN ($\alpha=0.5$) reste sous 0.015. Il tient mieux parce qu'il a effectivement modifié les embeddings, pas juste recalibré les sorties.
+
+\section{Utilisation d'outils d'IA}
+Ce projet a utilisé \textbf{Claude} (Anthropic) comme assistant de développement pour la structuration du code, la recherche bibliographique et le debugging. Toutes les décisions méthodologiques et l'analyse des résultats sont le fruit du travail de l'équipe.
+
+\section{Conclusion et Limites}
+Notre analyse montre que le biais sur Pokec est avant tout topologique : retirer le feature genre l'aggrave, prouvant que le GCN le reconstruit via la structure du graphe. Côté correction, deux options se dégagent. DP-reg $\lambda=0.1$ est le bon compromis si on veut un modèle facile à régler et un coût en performance minimal. \textbf{FairGNN $\alpha=0.5$ offre le meilleur profil global} : DP gap quasi-nul (0.004), coût AUC modéré (-0.7\%), robustesse structurelle préservée. La contrepartie est un Cosine F/H négatif ($-0.16$), signe d'une représentation activement anti-homophilique — à surveiller pour les tâches downstream. Aucune méthode ne satisfait toutes les métriques en même temps, ce qui illustre le théorème d'impossibilité de Chouldechova \cite{chouldechova2017fair}.
+
+\textbf{Limites.}
+\begin{itemize}
+\item Seed unique (42) : la variance inter-runs n'est pas quantifiée.
+\item Attribut sensible binaire : pas d'intersectionnalité (genre $\times$ âge).
+\item Calibration non corrigée : l'ECE $\approx 0.16$ pourrait être réduit par \textit{temperature scaling} \cite{guo2017calibration}.
+\item Sensibilité au bruit gaussien sur les features : les 3 modèles passent sous le seuil de robustesse (Rob $\approx 0.94 < 0.95$) — vulnérabilité orthogonale au pipeline fairness.
+\item FairGNN instable : sensibilité non-monotone à $\alpha$ (le DP gap augmente pour $\alpha \ge 2$).
+\item Dataset Pokec (2012, Slovaquie) : généralisation non testée sur d'autres réseaux sociaux.
+\end{itemize}
+
+% --- BIBLIOGRAPHIE ---
+\begin{thebibliography}{00}
+
+\bibitem{kipf2017semi}
+T.~N. Kipf and M.~Welling, ``Semi-supervised classification with graph convolutional networks,'' in \emph{International Conference on Learning Representations (ICLR)}, 2017.
+
+\bibitem{dai2021say}
+E.~Dai and S.~Wang, ``Say no to the discrimination: Learning fair graph neural networks with limited sensitive attribute information,'' in \emph{Proceedings of the 14th ACM International Conference on Web Search and Data Mining (WSDM)}, 2021, pp. 680--688.
+
+\bibitem{gal2016dropout}
+Y.~Gal and Z.~Ghahramani, ``Dropout as a bayesian approximation: Representing model uncertainty in deep learning,'' in \emph{International Conference on Machine Learning (ICML)}, 2016, pp. 1050--1059.
+
+\bibitem{chouldechova2017fair}
+A.~Chouldechova, ``Fair prediction with disparate impact: A study of bias in recidivism prediction instruments,'' \emph{Big Data}, vol.~5, no.~2, pp. 153--163, 2017.
+
+\bibitem{kamiran2012data}
+F.~Kamiran and T.~Calders, ``Data preprocessing techniques for classification without discrimination,'' \emph{Knowledge and Information Systems}, vol.~33, no.~1, pp. 1--33, 2012.
+
+\bibitem{agarwal2018reductions}
+A.~Agarwal, A.~Beygelzimer, M.~Dudik, J.~Langford, and H.~Wallach, ``A reductions approach to fair classification,'' in \emph{International Conference on Machine Learning (ICML)}, 2018, pp. 60--69.
+
+\bibitem{guo2017calibration}
+C.~Guo, G.~Pleiss, Y.~Sun, and K.~Q. Weinberger, ``On calibration of modern neural networks,'' in \emph{International Conference on Machine Learning (ICML)}, 2017, pp. 1321--1330.
+
+\end{thebibliography}
+
+\end{document}
