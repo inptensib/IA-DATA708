@@ -448,3 +448,24 @@ def evaluate_noise_robustness(models_dict, test_data, sens, device, sigmas=(0.1,
             noise_results.append({'Modele': name, 'sigma': sigma, 'AUC': roc_auc_score(tl_n, tp_n), 'DP': f_n['DP']})
 
     return pd.DataFrame(noise_results)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Généralisation multi-régions (Acte 6)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def homophily_ratio(edge_index, sens):
+    """Ratio d'homophilie normalisé : P(même genre | arête) / P(même genre | paire aléatoire).
+
+    Args:
+        edge_index : tensor (2, E) des arêtes (orienté ou non).
+        sens       : tensor (N,) des attributs sensibles binaires.
+
+    Returns:
+        float : ratio (1.0 = homophilie nulle, > 1 = sur-représentation des liens intra-genre).
+    """
+    src_g, tgt_g = sens[edge_index[0]], sens[edge_index[1]]
+    p_same_edge = (src_g == tgt_g).float().mean().item()
+    p_f = (sens == 0).float().mean().item()
+    p_same_rand = p_f ** 2 + (1 - p_f) ** 2
+    return p_same_edge / p_same_rand

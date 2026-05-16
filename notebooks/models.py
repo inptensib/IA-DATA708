@@ -291,3 +291,108 @@ def train_fairgnn(model, train_data, val_data, sens, device,
     if best_state is not None:
         model.load_state_dict(best_state)
     return best_auc
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Orchestration multi-régions (Acte 6)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def run_region_experiment(region_name, data_dir, device, epochs=100, seed=42, min_nodes=5000):
+    """Charge une région Pokec, splitte les arêtes, entraîne Baseline / DP / FairGNN.
+
+    Args:
+        region_name : nom exact du préfixe de région (ex. 'zilinsky kraj').
+        data_dir    : chemin vers le dossier Pokec.
+        device      : torch.device.
+        epochs      : nombre d'epochs pour chaque entraînement.
+        seed        : seed pour la reproductibilité (appelée avant chaque modèle).
+        min_nodes   : si la région a < min_nodes nœuds, on saute (retourne None).
+
+    Returns:
+        dict avec n_nodes, n_edges, homophily, p_female, AUC/DP pour les 3 modèles, ECE_base.
+        None si la région est trop petite.
+    """
+    from torch_geometric.transforms import RandomLinkSplit
+    from utils import load_pokec, set_seed
+    from metrics import homophily_ratio, collect_results, compute_ece
+
+    set_seed(seed)
+    data_r, sens_r, _ = load_pokec(data_dir, region=region_name)
+    if data_r.num_nodes < min_nodes:
+        print(f"  [SKIP] {region_name} : {data_r.num_nodes} noeuds < {min_nodes}")
+        return None
+
+    transform = RandomLinkSplit(num_val=0.15, num_test=0.15, is_undirected=True,
+                                add_negative_train_samples=True, neg_sampling_ratio=1.0)
+    train_r, val_r, test_r = transform(data_r)
+    hom = homophily_ratio(data_r.edge_index, sens_r)
+    print(f"  Graphe : {data_r.num_nodes:,} noeuds | {data_r.edge_index.shape[1]//2:,} aretes | hom={hom:.2f}")
+
+    tag = region_name[:10]
+    in_dim = data_r.x.shape[1]
+
+    set_seed(seed)
+    m_base = GCN(in_dim).to(device)
+    train_with_best(m_base, train_r, val_r, device, epochs=epochs, desc=f'{tag} Base')
+    r_base = collect_results(m_base, test_r, sens_r, device)
+
+    set_seed(seed)
+    m_dp = GCN(in_dim).to(device)
+    train_fair(m_dp, train_r, val_r, sens_r, device, epochs=epochs, lam_dp=0.1, desc=f'{tag} DP')
+    r_dp = collect_results(m_dp, test_r, sens_r, device)
+
+    set_seed(seed)
+    m_fg = GCN(in_dim).to(device)
+    train_fairgnn(m_fg, train_r, val_r, sens_r, device, alpha=0.5, epochs=epochs, desc=f'{tag} FairGNN')
+    r_fg = collect_results(m_fg, test_r, sens_r, device)
+
+    ece_base = compute_ece(r_base['tp'], r_base['tl'], n_bins=15)
+
+    del m_base, m_dp, m_fg
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    return {
+        'region': region_name,
+        'n_nodes': data_r.num_nodes,
+        'n_edges': data_r.edge_index.shape[1] // 2,
+        'homophily': hom,
+        'p_female': (sens_r == 0).float().mean().item(),
+        'AUC_base': r_base['auc'], 'DP_base': r_base['f']['DP'],
+        'AUC_dp':   r_dp['auc'],   'DP_dp':   r_dp['f']['DP'],
+        'AUC_fg':   r_fg['auc'],   'DP_fg':   r_fg['f']['DP'],
+        'ECE_base': ece_base,
+    }
+
+
+def multi_region_meta_analysis(df_regions):
+    """Calcule l'agrégation et les tests statistiques sur df_regions (DataFrame indexé par région).
+
+    Returns:
+        dict avec means, stds, wilcoxon (stat, pval), spearman (rho, pval), diff_dp (array).
+    """
+    import numpy as np
+    from scipy import stats
+
+    means, stds = {}, {}
+    for metric in ['AUC_base', 'DP_base', 'AUC_dp', 'DP_dp', 'AUC_fg', 'DP_fg']:
+        means[metric] = df_regions[metric].mean()
+        stds[metric] = df_regions[metric].std()
+
+    diff_dp = df_regions['DP_base'].values - df_regions['DP_fg'].values
+    wilc = (np.nan, np.nan)
+    if len(diff_dp) >= 3:
+        try:
+            wilc = stats.wilcoxon(df_regions['DP_base'], df_regions['DP_fg'])
+        except ValueError:
+            pass
+
+    rho, pval_rho = (np.nan, np.nan)
+    if len(df_regions) >= 3:
+        rho, pval_rho = stats.spearmanr(df_regions['homophily'], df_regions['DP_base'])
+
+    return {
+        'means': means, 'stds': stds,
+        'wilcoxon': wilc, 'spearman': (rho, pval_rho),
+        'diff_dp': diff_dp,
+    }

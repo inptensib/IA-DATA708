@@ -86,6 +86,23 @@ Trois méthodes implémentées sans Fairlearn/AIF360 :
 
 **Suppression d'arêtes (10%)** : perte modeste d'AUC (~0.7 points) pour les deux modèles. Le DP gap du modèle corrigé reste sous 0.05, confirmant la survie de la correction structurelle.
 
+### 2.5 Acte 5 — Généralisation multi-régions
+
+Pour tester la portée des conclusions, nous répliquons l'expérience (Baseline / DP λ=0.1 / FairGNN α=0.5, mêmes hyperparamètres, seed=42) sur 4 régions Pokec aux profils contrastés.
+
+| Région | n_nodes | $p_F$ | Homophilie | AUC_base | DP_base | DP_DP(0.1) | DP_FG(0.5) |
+|:--|--:|--:|--:|--:|--:|--:|--:|
+| Ceska republika | 31 298 | 0.570 | 0.65 | 0.856 | 0.050 | 0.030 | **0.004** |
+| Bratislavsky kraj | 176 192 | 0.486 | 0.73 | 0.873 | 0.032 | **0.001** | 0.011 |
+| Nitriansky kraj | 176 815 | 0.503 | 0.88 | 0.902 | 0.025 | 0.016 | **0.008** |
+| Zilinsky kraj | 187 585 | 0.505 | 0.93 | 0.898 | **0.011** | 0.008 | 0.041 ⚠ |
+| **Moyenne ± std** | | | | 0.882 ± 0.022 | 0.030 ± 0.016 | 0.014 ± 0.013 | 0.016 ± 0.017 |
+
+- **Corrélation Spearman homophilie ↔ DP baseline** : $\rho = -1.00$, $p < 0.001$ — l'hypothèse intuitive « plus d'homophilie → plus de biais » est **réfutée**. Ce sont les régions à plus faible $p_F$ asymétrique et de plus petite taille (Ceska) qui montrent le DP gap absolu le plus élevé. Le DP gap baseline n'est donc pas piloté par l'homophilie seule mais par une combinaison (déséquilibre du genre + taille du graphe + homophilie).
+- **Wilcoxon apparié Baseline vs FairGNN** : $W = 3.00$, $p = 0.625$ (non significatif, $N = 4$). FairGNN ne montre **pas** d'amélioration agrégée car il **échoue sur Zilinsky** (DP 0.011 → 0.041, dégradation ×3.7). Sur ce graphe à 2.2M arêtes et signal de biais faible, le discriminateur adversarial sur-corrige et introduit un biais inverse.
+- **DP-regularization ($\lambda = 0.1$) est le seul correctif robuste** : il réduit le DP gap sur les **4/4 régions** et amène toutes les régions sous le seuil de 0.05. Sur Bratislavsky il atteint DP = 0.0009 (quasi-nul) pour −0.08% AUC.
+- **Coût en AUC marginal** : 0.882 → 0.881 → 0.879 entre Baseline / DP / FairGNN — les corrections restent quasi-gratuites en performance à travers les régions.
+
 ## 3. Analyse du Compromis Performance ↔ Fairness ↔ Robustesse
 
 La courbe de Pareto AUC vs DP gap présente un **coude net à λ=0.1** : en dessous, la correction est gratuite ; au-dessus, chaque gain de fairness coûte de plus en plus de performance. Le front de Pareto est dominé par deux points optimaux — DP (λ=0.1) pour le meilleur ratio AUC/fairness, et FairGNN (α=0.5) pour la meilleure fairness absolue.
@@ -96,14 +113,17 @@ L'impossibilité de Chouldechova (2017) est illustrée empiriquement : aucune co
 
 Un enseignement majeur émerge de l'Acte 2 : le biais en link prediction sur graphe social est **fondamentalement topologique**. Retirer le feature genre aggrave le biais (+0.012 de DP gap), car le GCN reconstruit l'information de genre via la propagation de messages sur un graphe homophile. Les approches naïves (suppression de features, reweighting) sont donc insuffisantes — seules les méthodes agissant sur les embeddings (régularisation DP, adversarial) ou sur la structure de l'apprentissage sont efficaces.
 
+La réplication multi-régions (Acte 5) **nuance ce diagnostic** : si le mécanisme topologique est universel, le **DP gap absolu** dépend aussi du déséquilibre du genre ($p_F$) et de la taille du graphe ; l'anti-corrélation $\rho = -1.00$ entre homophilie normalisée et DP gap baseline en témoigne. Surtout, le **choix de méthode change** entre les régions : FairGNN, qui dominait sur Ceska, échoue sur Zilinsky. DP-regularization ($\lambda = 0.1$) reste robuste partout. La recommandation pratique est donc **DP-reg en première intention** ; FairGNN n'est à employer que lorsque le DP gap baseline est élevé et qu'on peut valider par région avant déploiement.
+
 ## 4. Limites
 
-- **Seed unique** (42) : la variance inter-runs n'est pas quantifiée. Un protocole avec 5 seeds serait plus rigoureux.
+- **Seed unique** (42) sur Actes 1-4 et sur la réplication multi-régions : la variance inter-runs n'est pas quantifiée. L'échec de FairGNN sur Zilinsky pourrait être imputable à un *bad seed* — à vérifier avec 3-5 seeds × 4 régions.
+- **$N = 4$ régions** pour l'Acte 5 : exploratoire, faible puissance statistique (Wilcoxon p=0.625). Pour rigueur publique, viser $N \geq 10$ régions.
 - **Attribut sensible binaire** : ne capture pas l'intersectionnalité (genre × âge × région).
 - **Calibration non traitée** : l'ECE≈0.16 pourrait être amélioré par temperature scaling ou Platt scaling.
-- **Dataset spécifique** : les résultats sur Pokec (Slovaquie, 2012) ne se généralisent pas nécessairement à d'autres réseaux sociaux.
+- **Mesure d'homophilie confondante** : le ratio $P(\text{same}|\text{edge}) / P(\text{same}|\text{random})$ mélange déséquilibre du genre et structure. Un coefficient d'assortativité de Newman serait plus orthogonal.
 - **Pas de fairness causale** : seules des métriques observationnelles sont utilisées ; un cadre contrefactuel causal (Kusner et al., 2017) permettrait une analyse plus fine.
-- **FairGNN instable** : la sensibilité à α (non-monotone, α=2.0 pire que le baseline) souligne le besoin de méthodes de sélection d'hyperparamètres fairness-aware.
+- **FairGNN instable** : la sensibilité à α (non-monotone sur Ceska, retournement complet sur Zilinsky) souligne le besoin de méthodes de sélection d'hyperparamètres fairness-aware et de diagnostics par région avant déploiement.
 
 ## 5. Utilisation d'outils d'IA
 
@@ -111,11 +131,13 @@ Ce projet a utilisé **Claude** (Anthropic) comme assistant de développement po
 
 ## 6. Conclusion
 
-Ce projet a démontré qu'un pipeline complet de Responsible AI — observer, diagnostiquer, corriger, valider — permet d'obtenir un modèle de prédiction de liens à la fois performant (AUC=0.857), équitable (DP gap=0.025) et robuste aux perturbations, avec moins de 1% de perte de performance par rapport au baseline non corrigé.
+Ce projet a démontré qu'un pipeline complet de Responsible AI — observer, diagnostiquer, corriger, valider — puis répliquer sur plusieurs régions, permet d'obtenir un modèle de prédiction de liens performant (AUC=0.882 ± 0.022 sur 4 régions), équitable (DP gap moyen 0.014 sous DP-reg) et robuste, avec moins de 1% de perte de performance par rapport au baseline non corrigé.
 
-Le résultat le plus marquant est la nature **topologique** du biais : sur un graphe social homophile, retirer le feature sensible ne réduit pas le biais — il l'aggrave. Ce constat invalide l'approche naïve de "fairness through unawareness" et justifie le recours à des méthodes agissant sur la loss (régularisation DP) ou les embeddings (adversarial). La courbe de Pareto révèle un coude à λ=0.1 où la correction est quasi-gratuite, offrant un point de fonctionnement pratique pour le déploiement.
+Le résultat le plus marquant des Actes 1-4 est la nature **topologique** du biais sur Ceska : retirer le feature sensible aggrave le biais, ce qui invalide l'approche naïve de "fairness through unawareness" et justifie le recours à des méthodes agissant sur la loss (régularisation DP) ou les embeddings (adversarial). La courbe de Pareto révèle un coude à λ=0.1 où la correction est quasi-gratuite.
 
-L'analyse d'incertitude et de robustesse (Acte 4) confirme que les corrections de fairness sont **orthogonales** aux propriétés de calibration et d'incertitude du modèle : corriger le biais ne dégrade ni la confiance ni la robustesse aux perturbations. FairGNN (α=0.5) se distingue par la stabilité de sa correction sous bruit, mais sa sensibilité non-monotone à l'hyperparamètre α appelle des méthodes de sélection automatique fairness-aware.
+La généralisation multi-régions (Acte 5) apporte deux résultats inattendus et instructifs : (i) l'amplitude du DP gap baseline est **anti-corrélée à l'homophilie normalisée** ($\rho = -1.00$ sur 4 régions), ce qui souligne que le biais absolu dépend aussi du déséquilibre de l'attribut sensible et de la taille du graphe — pas seulement de la structure homophile ; (ii) **FairGNN ($\alpha = 0.5$) ne se généralise pas** — il dégrade le DP gap sur Zilinsky (×3.7), alors que DP-regularization ($\lambda = 0.1$) réduit le DP gap sur les 4/4 régions. La recommandation pratique pour un déploiement est donc **DP-regularization en première intention**, FairGNN restant réservé à des contextes où un diagnostic par région est possible.
+
+L'analyse d'incertitude et de robustesse (Acte 4) confirme par ailleurs que les corrections de fairness sont **orthogonales** aux propriétés de calibration et d'incertitude du modèle : corriger le biais ne dégrade ni la confiance ni la robustesse aux perturbations. Mais aucune méthode testée n'élève la robustesse au bruit features au-dessus du seuil 0.95 — c'est une vulnérabilité distincte qui appelle des défenses dédiées (régularisation Lipschitz, entraînement adversarial sur les features).
 
 ## Références
 

@@ -547,3 +547,47 @@ def plot_radar(summary, colors):
         fair = "FAIR" if s['DP gap'] < 0.05 else "NON FAIR"
         robust = "ROBUSTE" if s['Robustesse AUC'] > 0.95 else "SENSIBLE"
         print(f"  {name:18s} | AUC={s['AUC']:.4f} | DP={s['DP gap']:.4f} [{fair}] | Rob={s['Robustesse AUC']:.4f} [{robust}]")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Acte 6 — Réplication multi-régions
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def plot_multi_region_dp(df_regions, rho=None, figsize=(14, 5)):
+    """Visualisation 2 panneaux pour la réplication multi-régions.
+
+    Panel A : DP gap par région et par méthode (barres groupées).
+    Panel B : Homophilie vs DP gap baseline (scatter) avec corrélation Spearman.
+    """
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
+
+    x = np.arange(len(df_regions))
+    w = 0.27
+    axes[0].bar(x - w, df_regions['DP_base'], w, label='Baseline',
+                color='#1f77b4', edgecolor='black')
+    axes[0].bar(x,     df_regions['DP_dp'],   w, label='DP (lambda=0.1)',
+                color='#2ca02c', edgecolor='black')
+    axes[0].bar(x + w, df_regions['DP_fg'],   w, label='FairGNN (alpha=0.5)',
+                color='#d62728', edgecolor='black')
+    axes[0].axhline(0.05, color='orange', ls='--', lw=1.5, label='Seuil DP fair (0.05)')
+    axes[0].set_xticks(x)
+    axes[0].set_xticklabels([r.split()[0][:10] for r in df_regions.index], rotation=15)
+    axes[0].set(ylabel='DP gap', title='DP gap par region - 3 methodes')
+    axes[0].legend(fontsize=9, loc='upper right')
+
+    axes[1].scatter(df_regions['homophily'], df_regions['DP_base'], s=140,
+                    color='#1f77b4', edgecolor='black', zorder=3, label='Baseline')
+    axes[1].scatter(df_regions['homophily'], df_regions['DP_fg'], s=140,
+                    color='#d62728', edgecolor='black', zorder=3, label='FairGNN (alpha=0.5)')
+    for r_, row in df_regions.iterrows():
+        axes[1].annotate(r_.split()[0][:8], (row['homophily'], row['DP_base']),
+                         xytext=(6, 6), textcoords='offset points', fontsize=9)
+    axes[1].axhline(0.05, color='orange', ls='--', lw=1.5, alpha=0.7)
+    title = "Homophilie <-> DP gap"
+    if rho is not None and not np.isnan(rho):
+        title += f"  (Spearman rho={rho:.2f})"
+    axes[1].set(xlabel="Ratio d'homophilie", ylabel='DP gap', title=title)
+    axes[1].legend(fontsize=9, loc='upper left')
+
+    plt.tight_layout()
+    plt.show()
